@@ -8,7 +8,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
-
 public class ConsistencyUtils {
 
     private AtomicInteger numberOfRecords = null;
