@@ -3,81 +3,72 @@ package utils;
 import java.lang.reflect.Field;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.logging.Logger;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class ConsistencyUtils {
 
-    private AtomicInteger numberOfRecords = null;
+    private static final Logger log =  Logger.getLogger(ConsistencyUtils.class.getSimpleName());
+
+    private ConsistencyCalculations calculator = new ConsistencyCalculations();
+
+    private static final String RECORDS_PAIRED = "RecordsPaired";
+    private static final String AVERAGE_CONSISTENCY = "AverageConsistency";
+    private static final String TO_WRITE_AMOUNT = "ItemsToWriteNumber";
+    private static final String TO_COMPARE_AMOUNT = "ItemsToCompareNumber";
+
+    private AtomicInteger numberOfRecordsToWrite = null;
+    private AtomicInteger numberOfRecordsToCompare = null;
     private AtomicInteger recordsPaired = null;
-    private AtomicInteger totalItems = null;
-    private Map<String, BigDecimal> dbConsistency = null;
-    private Map<String, Integer> CONSISTENCY_MAP = null;
+
+    private Map<String, BigDecimal> fields = null;
+    private Map<String, BigDecimal> data = null;
+
+    private Map<String, Integer> fieldMap = null;
     private boolean areFieldsInitialized = false;
+    private List<String> excludedFields = new ArrayList<>(Arrays.asList(RECORDS_PAIRED, AVERAGE_CONSISTENCY));
 
-    public <Key, T> Map<String, BigDecimal> getConsistency(Map<Key, T> itemsToWrite, Map<Key, T> itemsToCompare) {
-        initializeGlobalVariables();
-        mapClassToFieldMap(itemsToWrite, itemsToCompare);
-
-        totalItems.getAndAdd(itemsToWrite.size());
-
-        setRecordsPaired();
-
-        fillTheConsistencyMap(CONSISTENCY_MAP, numberOfRecords.get(), dbConsistency);
-
-        setAverageConsistency();
-
-        return dbConsistency;
+    public <Key, T> ConsistencyResult getConsistency(ConsistencySpec spec) {
+        Map itemsToWrite = spec.getItemsToWrite();
+        Map itemsToCompare = spec.getItemsToCompare();
+        excludedFields.addAll(spec.getFieldsToIgnore());
+        return getConsistency(itemsToWrite, itemsToCompare);
     }
 
-    private <T> boolean checkIfMatchAndIncrement(T first, T second) {
-        return first.equals(second);
+    public <Key, T> ConsistencyResult getConsistency(Map<Key, T> itemsToWrite, Map<Key, T> itemsToCompare) {
+        initializeDataAndFields(itemsToWrite, itemsToCompare);
+        mapFields(itemsToWrite, itemsToCompare);
+        numberOfRecordsToWrite.getAndAdd(itemsToWrite.size());
+        fillFieldMap();
+        fillDataMap();
+        return getConsistencyResult();
     }
 
-    private <T extends BigDecimal> boolean checkIfDecimalsMatchAndIncrement(T first, T second) {
-        BigDecimal absoluteDifferenceValue = first.subtract(second).abs();
-        return isTheSameWithTolerance(absoluteDifferenceValue);
-
-    }
-
-    private void fillTheConsistencyMap(Map<String, Integer> fieldMap, int numberOfRecords, Map<String, BigDecimal> dbConsistency) {
+    private void fillFieldMap() {
         Set<String> names = fieldMap.keySet();
         for (String name : names) {
-            dbConsistency.put(name, calculatePercentageOfConsistency2(fieldMap.get(name), numberOfRecords));
+            BigDecimal value = calculator.calculatePercentageOfConsistency(fieldMap.get(name), recordsPaired.get());
+            fields.put(name, value);
         }
-    }
-
-    private <T extends BigDecimal> boolean isTheSameWithTolerance(T value) {
-        return value.compareTo(BigDecimal.ONE) <= 0;
-    }
-
-
-    private BigDecimal calculatePercentageOfConsistency2(Integer value, int numberOfRecords) {
-        if (numberOfRecords == 0) {
-            return BigDecimal.ZERO;
-        }
-        return BigDecimal.valueOf(value)
-                .multiply(BigDecimal.valueOf(100L))
-                .divide(BigDecimal.valueOf(numberOfRecords), 2, RoundingMode.HALF_UP);
     }
 
     private void initializeMapFields(Class type) {
-        if (CONSISTENCY_MAP == null) {
+        if (fieldMap == null) {
             Field[] allFields = type.getDeclaredFields();
             Map<String, Integer> consistencyMap = new HashMap<>();
             for (Field field : allFields) {
-                consistencyMap.put(field.getName(), 0);
+                if (!excludedFields.contains(field.getName())) {
+                    consistencyMap.put(field.getName(), 0);
+                }
             }
-            CONSISTENCY_MAP = consistencyMap;
+            fieldMap = consistencyMap;
         }
-    }
-
-    private BigDecimal getAverageSimilarity(Map<String, BigDecimal> consistencyValues) {
-        BigDecimal sum = consistencyValues.values().stream().reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal number = BigDecimal.valueOf(consistencyValues.size());
-        return sum.divide(number, 2, RoundingMode.HALF_UP);
     }
 
     private <T> void compareObjects(T objectToWrite, T objectToCompare) {
@@ -91,47 +82,47 @@ public class ConsistencyUtils {
                 Object fieldValueToWrite = field.get(objectToWrite);
                 Object fieldValueToCompare = field.get(objectToCompare);
                 String fieldName = field.getName();
-
-                boolean doFieldValuesMatch = doFieldValuesMatch(fieldValueToWrite, fieldValueToCompare, fieldType);
-                ifFieldValuesMatchThenIncrementConsistency(fieldName, doFieldValuesMatch);
+                if (!excludedFields.contains(fieldName)) {
+                    boolean doFieldValuesMatch = doFieldValuesMatch(fieldValueToWrite, fieldValueToCompare, fieldType);
+                    ifFieldValuesMatchThenIncrementConsistency(fieldName, doFieldValuesMatch);
+                }
             }
         } catch (IllegalAccessException e) {
-
+            log.info("Field doesn't exist" + e);
         }
     }
 
-    private boolean doFieldValuesMatch (Object fieldValueToWrite, Object fieldValueToCompare, Class fieldType) {
+    private boolean doFieldValuesMatch(Object fieldValueToWrite, Object fieldValueToCompare, Class fieldType) {
         boolean doFieldValuesMatch = false;
         if (fieldType == BigDecimal.class) {
-            doFieldValuesMatch = checkIfDecimalsMatchAndIncrement((BigDecimal) fieldValueToWrite, (BigDecimal) fieldValueToCompare);
+            doFieldValuesMatch = calculator.checkIfDecimalsMatchAndIncrement((BigDecimal) fieldValueToWrite, (BigDecimal) fieldValueToCompare);
         }
         if (fieldType == String.class) {
-            doFieldValuesMatch = checkIfMatchAndIncrement(fieldValueToWrite, fieldValueToCompare);
+            doFieldValuesMatch = calculator.checkIfMatchAndIncrement(fieldValueToWrite, fieldValueToCompare);
         }
         if (fieldType == Long.class) {
-            doFieldValuesMatch = checkIfMatchAndIncrement(fieldValueToWrite, fieldValueToCompare);
+            doFieldValuesMatch = calculator.checkIfMatchAndIncrement(fieldValueToWrite, fieldValueToCompare);
         }
         return doFieldValuesMatch;
     }
 
-    private void ifFieldValuesMatchThenIncrementConsistency (String fieldName, boolean doFieldValuesMatch) {
-        Integer counter = CONSISTENCY_MAP.get(fieldName);
+    private void ifFieldValuesMatchThenIncrementConsistency(String fieldName, boolean doFieldValuesMatch) {
+        Integer counter = fieldMap.get(fieldName);
         if (doFieldValuesMatch) {
-            CONSISTENCY_MAP.put(fieldName, counter + 1);
+            fieldMap.put(fieldName, counter + 1);
         }
     }
 
     private void initializeGlobalVariables() {
-        if (!areFieldsInitialized) {
-            numberOfRecords = new AtomicInteger(0);
-            recordsPaired = new AtomicInteger(0);
-            totalItems = new AtomicInteger(0);
-            dbConsistency = new HashMap<>();
-            areFieldsInitialized = true;
-        }
+        numberOfRecordsToWrite = new AtomicInteger(0);
+        recordsPaired = new AtomicInteger(0);
+        numberOfRecordsToWrite = new AtomicInteger(0);
+        numberOfRecordsToCompare = new AtomicInteger(0);
+        data = new HashMap<>();
+        fields = new HashMap<>();
     }
 
-    private <Key, T> void mapClassToFieldMap(Map<Key, T> itemsToWrite, Map<Key, T> itemsToCompare) {
+    private <Key, T> void mapFields(Map<Key, T> itemsToWrite, Map<Key, T> itemsToCompare) {
         Class itemClass = itemsToWrite.values().stream().findFirst().get().getClass();
         initializeMapFields(itemClass);
         for (Key key : itemsToWrite.keySet()) {
@@ -144,17 +135,54 @@ public class ConsistencyUtils {
         }
     }
 
-    private void setRecordsPaired() {
-        numberOfRecords.set(recordsPaired.get());
-
-        BigDecimal one = BigDecimal.valueOf(numberOfRecords.get());
-        BigDecimal two = BigDecimal.valueOf(totalItems.get());
-        BigDecimal recordPairedPercentage = one.divide(two, 2, RoundingMode.HALF_UP).multiply(BigDecimal.valueOf(100L));
-        dbConsistency.put("RecordsPaired", recordPairedPercentage);
+    private void fillDataMap() {
+        setRecordsPaired();
+        setItemsAmounts();
+        setAverageSimilarity();
     }
 
-    private void setAverageConsistency() {
-        BigDecimal averageConsistency = getAverageSimilarity(dbConsistency);
-        dbConsistency.put("AverageConsistency", averageConsistency);
+    private void setAverageSimilarity() {
+        Map<String, BigDecimal> consistencyCopy = new HashMap<>(fields);
+        BigDecimal sum = consistencyCopy.values().stream().reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal number = BigDecimal.valueOf(consistencyCopy.size());
+        BigDecimal averageConsistency = sum.divide(number, 2, RoundingMode.HALF_UP);
+        data.put(AVERAGE_CONSISTENCY, averageConsistency);
+
+    }
+
+    private void setRecordsPaired() {
+        BigDecimal one = BigDecimal.valueOf(recordsPaired.get());
+        BigDecimal two = BigDecimal.valueOf(numberOfRecordsToWrite.get());
+        BigDecimal recordPairedPercentage = one.divide(two, 2, RoundingMode.HALF_UP).multiply(BigDecimal.valueOf(100L));
+        data.put(RECORDS_PAIRED, recordPairedPercentage);
+    }
+
+    private void setItemsAmounts() {
+        BigDecimal toWriteAmount = BigDecimal.valueOf(numberOfRecordsToWrite.get());
+        BigDecimal toCompareAmount = BigDecimal.valueOf(numberOfRecordsToCompare.get());
+        data.put(TO_WRITE_AMOUNT, toWriteAmount);
+        data.put(TO_COMPARE_AMOUNT, toCompareAmount);
+    }
+
+    private void excludeKeyFields(Class key) {
+        Field[] allFields = key.getDeclaredFields();
+        for (Field field : allFields) {
+            field.setAccessible(true);
+            String fieldName = field.getName();
+            excludedFields.add(fieldName);
+        }
+    }
+
+    private ConsistencyResult getConsistencyResult() {
+        return new ConsistencyResult(fields, data);
+    }
+
+    private <Key, T> void initializeDataAndFields(Map<Key, T> itemsToWrite, Map<Key, T> itemsToCompare) {
+        if (!areFieldsInitialized) {
+            initializeGlobalVariables();
+            numberOfRecordsToCompare.getAndAdd(itemsToCompare.size());
+            excludeKeyFields(itemsToWrite.keySet().stream().findFirst().get().getClass());
+            areFieldsInitialized = true;
+        }
     }
 }
