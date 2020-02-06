@@ -23,7 +23,7 @@ public class ConsistencyUtils {
         return getConsistency(itemsToWrite, itemsToCompare);
     }
 
-    public <Key, T> ConsistencyResult getConsistency(Map<Key, T> itemsToWrite, Map<Key, T> itemsToCompare) {
+    private <Key, T> ConsistencyResult getConsistency(Map<Key, T> itemsToWrite, Map<Key, T> itemsToCompare) {
         initializeDataAndFields(itemsToWrite, itemsToCompare);
         mapFields(itemsToWrite, itemsToCompare);
         numberOfRecordsToWrite.getAndAdd(itemsToWrite.size());
