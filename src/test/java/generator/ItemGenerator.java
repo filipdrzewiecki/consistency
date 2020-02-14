@@ -3,7 +3,6 @@ package generator;
 import dto.Item;
 
 import java.math.BigDecimal;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -58,36 +57,20 @@ public class ItemGenerator {
     }
 
     public static List<Item> createListOfItems (int id) {
-        final var items = IntStream.range(1, 32)
-                .mapToObj(i -> createItem(i))
+        return IntStream.range(1, id)
+                .mapToObj(ItemGenerator::createItem)
                 .collect(Collectors.toUnmodifiableList());
-
-        List<Item> list = new ArrayList<>();
-
-        list.addAll(items);
-
-        return list;
     }
 
-    public static List<Item> createListOfModifiedItems(int id) {
-        final var listToCompare1 = IntStream.range(1, 11)
-                .mapToObj(i -> createItem(i))
+    public static List<Item> createListOfModifiedItems(int start, int end, int modifier) {
+        return IntStream.range(start, end)
+                .mapToObj(i -> modifyOtherItemValues(createItem(i), modifier))
                 .collect(Collectors.toList());
+    }
 
-        final var listToCompare2  = IntStream.range(11, 21)
-                .mapToObj(i -> modifyItemValues(createItem(i), i))
+    public static List<Item> createListOfModifiedValuesItems(int start, int end, int modifier) {
+        return IntStream.range(start, end)
+                .mapToObj(i -> modifyItemValues(createItem(i), modifier))
                 .collect(Collectors.toList());
-
-        final var listToCompare3  = IntStream.range(21, 31)
-                .mapToObj(i -> modifyOtherItemValues(modifyItemValues(createItem(i), i), i))
-                .collect(Collectors.toList());
-
-        List<Item> modifiedList = new ArrayList<>();
-
-        modifiedList.addAll(listToCompare1);
-        modifiedList.addAll(listToCompare2);
-        modifiedList.addAll(listToCompare3);
-
-        return modifiedList;
     }
 }

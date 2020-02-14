@@ -29,4 +29,21 @@ public class Key {
     public void setCode(String code) {
         this.code = code;
     }
+
+    @Override
+    public boolean equals(Object o) {
+        if (o == this) {
+            return true;
+        }
+
+        if (!(o instanceof Item)) {
+            return false;
+        }
+
+        Item item = (Item) o;
+
+        return name.equals(item.getName()) &&
+                year.equals(item.getYear()) &&
+                code.equals(item.getCode());
+    }
 }
